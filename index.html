@@ -374,6 +374,7 @@ function applyImport(parsed){
     payments:   Array.isArray(parsed.payments)?parsed.payments:[],
     expenses:   Array.isArray(parsed.expenses)?parsed.expenses:[],
     billings:   Array.isArray(parsed.billings)?parsed.billings:[],
+    insurances: Array.isArray(parsed.insurances)?parsed.insurances:[],
     invoices:   Array.isArray(parsed.invoices)?parsed.invoices:[],
   });
   closeModal();
@@ -1576,18 +1577,34 @@ function updateBillList(){
 function renderBilling(){
   const projMap=Object.fromEntries(DB.projects.map(p=>[p.id,p]));
   const billings=DB.billings||[];
+  const curMonth=monthStr();
+  // 全部合計
   const totalBilled=billings.reduce((s,b)=>s+(b.billedAmount||0),0);
   const totalReceived=billings.reduce((s,b)=>s+(b.receivedAmount||0),0);
   const totalPending=totalBilled-totalReceived;
+  // 當月合計（依請款日期）
+  const monthBillings=billings.filter(b=>(b.billingDate||'').startsWith(curMonth));
+  const mBilled=monthBillings.reduce((s,b)=>s+(b.billedAmount||0),0);
+  const mReceived=monthBillings.reduce((s,b)=>s+(b.receivedAmount||0),0);
+  const mPending=mBilled-mReceived;
   return `<div class="page">
     <div class="row-between page-head">
       <div><h1>請款管理</h1><p class="muted">各企業社/公司工地請款紀錄</p></div>
       <button class="btn primary" onclick="editBilling(null)">＋ 新增請款</button>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px">
-      <div class="card" style="text-align:center"><div class="muted" style="font-size:11px">總請款</div><div class="mono" style="font-size:16px;font-weight:800">${fmt(totalBilled)}</div></div>
-      <div class="card" style="text-align:center;background:#EAF4EC"><div class="muted" style="font-size:11px">已收</div><div class="mono" style="font-size:16px;font-weight:800;color:var(--success)">${fmt(totalReceived)}</div></div>
-      <div class="card" style="text-align:center;background:${totalPending>0?'#FBE7E2':''}"><div class="muted" style="font-size:11px">未收</div><div class="mono" style="font-size:16px;font-weight:800;color:${totalPending>0?'#B3402A':'var(--ink)'}">${fmt(totalPending)}</div></div>
+    <div style="margin-bottom:6px">
+      <div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:4px">當月（${curMonth}）</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px">
+        <div class="card" style="text-align:center;padding:10px"><div class="muted" style="font-size:10px">當月請款</div><div class="mono" style="font-size:14px;font-weight:800">${fmt(mBilled)}</div></div>
+        <div class="card" style="text-align:center;padding:10px;background:#EAF4EC"><div class="muted" style="font-size:10px">已收</div><div class="mono" style="font-size:14px;font-weight:800;color:var(--success)">${fmt(mReceived)}</div></div>
+        <div class="card" style="text-align:center;padding:10px;background:${mPending>0?'#FBE7E2':''}"><div class="muted" style="font-size:10px">未收</div><div class="mono" style="font-size:14px;font-weight:800;color:${mPending>0?'#B3402A':'var(--ink)'}">${fmt(mPending)}</div></div>
+      </div>
+      <div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:4px">累計總計</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:14px">
+        <div class="card" style="text-align:center"><div class="muted" style="font-size:11px">總請款</div><div class="mono" style="font-size:16px;font-weight:800">${fmt(totalBilled)}</div></div>
+        <div class="card" style="text-align:center;background:#EAF4EC"><div class="muted" style="font-size:11px">已收</div><div class="mono" style="font-size:16px;font-weight:800;color:var(--success)">${fmt(totalReceived)}</div></div>
+        <div class="card" style="text-align:center;background:${totalPending>0?'#FBE7E2':''}"><div class="muted" style="font-size:11px">未收</div><div class="mono" style="font-size:16px;font-weight:800;color:${totalPending>0?'#B3402A':'var(--ink)'}">${fmt(totalPending)}</div></div>
+      </div>
     </div>
     <div class="search-bar"><span>🔍</span><input placeholder="搜尋公司名稱或工程" value="${billSearch}" oninput="billSearch=this.value;updateBillList()"></div>
     <div id="bill-list-container">${buildBillRows()}</div>
