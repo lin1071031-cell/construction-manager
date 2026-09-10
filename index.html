@@ -274,8 +274,13 @@ const getOtAmount = (att, projectId) => {
   const ot=(att?.overtimes||[]).find(x=>x.projectId===projectId);
   return ot ? (ot.amount||0) : 0;
 };
-// 取得某員工當天總加班天數
 const getTotalOt = (att) => (att?.overtimes||[]).reduce((s,x)=>s+(x.amount||0),0);
+// 取得某員工在某工地的工時份額（1=全天, 0.5=半天, 預設1）
+const getSiteAmount = (att, projectId) => {
+  if(!att?.siteAmounts) return 1;
+  const v = att.siteAmounts[projectId];
+  return (v===undefined||v===null) ? 1 : v;
+};
 
 // ============================================================
 // App 狀態
@@ -437,8 +442,9 @@ function calcFinancialSummary(filterFn){
     att.forEach(a=>{
       const emp=empMap[a.employeeId]; if(!emp)return;
       const base=baseMult(a.status);
+      const siteAmt=getSiteAmount(a,p.id);
       const otAmt=getOtAmount(a,p.id);
-      totalLabor+=getRateForDate(emp,a.date)*(base+otAmt);
+      totalLabor+=getRateForDate(emp,a.date)*(base*siteAmt+otAmt);
     });
     // 其他支出
     const exps=(DB.expenses||[]).filter(x=>x.projectId===p.id&&filterFn(x.date));
@@ -699,17 +705,24 @@ function renderAttendance(){
         if(isLeave) return;
         const assigned=(att?.projectIds||[]).includes(p.id);
         const otAmount=getOtAmount(att,p.id);
+        const siteAmt=assigned?getSiteAmount(att,p.id):1;
+        const isHalf=assigned&&siteAmt===0.5;
         let chipBg='',chipColor='#666',chipBorder='#ddd';
         if(assigned && otAmount>0){ chipBg='#FF6A2B'; chipColor='#fff'; chipBorder='#FF6A2B'; }
+        else if(assigned && isHalf){ chipBg='#2E7D5A'; chipColor='#fff'; chipBorder='#2E7D5A'; }
         else if(assigned){ chipBg='#4C8C5C'; chipColor='#fff'; chipBorder='#4C8C5C'; }
-        else if(otAmount>0){ chipBg='#FFE8DC'; chipColor='#FF6A2B'; chipBorder='#FF6A2B'; } // 只有加班、無正班
-        const label=e.name.slice(0,2);
+        else if(otAmount>0){ chipBg='#FFE8DC'; chipColor='#FF6A2B'; chipBorder='#FF6A2B'; }
+        const label=e.name.slice(0,2)+(isHalf?'½':'');
         const otLabel=otAmount===0.5?'加班½':otAmount===1?'加班✓':'加班';
         const otColor=otAmount>0?'#FF6A2B':'#888';
         const otBg=otAmount>0?'#FFE8DC':'#eee';
-        empGrid+=`<div style="display:flex;flex-direction:column;align-items:center;gap:3px">
+        const halfLabel=isHalf?'½天✓':'½天';
+        const halfBg=isHalf?'#2E7D5A':'#eee';
+        const halfColor=isHalf?'#fff':'#888';
+        empGrid+=`<div style="display:flex;flex-direction:column;align-items:center;gap:2px">
           <button style="min-width:56px;padding:6px 8px;border-radius:8px;border:2px solid ${chipBorder};background:${chipBg||'#fff'};color:${chipColor};font-weight:700;font-size:13px;cursor:pointer;text-align:center" onclick="toggleEmpSite('${e.id}','${p.id}')">${label}</button>
-          <button style="font-size:10px;border:none;background:${otBg};color:${otColor};border-radius:4px;padding:2px 6px;cursor:pointer;font-weight:700" onclick="toggleOtSite('${e.id}','${p.id}')" title="點擊切換：無→半天加班→全天加班→無">${otLabel}</button>
+          ${assigned?`<button style="font-size:9px;border:none;background:${halfBg};color:${halfColor};border-radius:4px;padding:2px 5px;cursor:pointer;font-weight:700" onclick="toggleSiteAmount('${e.id}','${p.id}')" title="切換工時：1天↔半天（影響工地成本，不影響員工薪資）">${halfLabel}</button>`:''}
+          <button style="font-size:9px;border:none;background:${otBg};color:${otColor};border-radius:4px;padding:2px 5px;cursor:pointer;font-weight:700" onclick="toggleOtSite('${e.id}','${p.id}')" title="切換加班">${otLabel}</button>
         </div>`;
       });
       const isDone=p.status==='已完工';
@@ -831,7 +844,12 @@ function toggleEmpSite(empId, projectId){
   const cur=att.projectIds||[];
   const isOn=cur.includes(projectId);
   att.projectIds=isOn?cur.filter(id=>id!==projectId):[...cur,projectId];
-  if(isOn) att.overtimes=(att.overtimes||[]).filter(x=>x.projectId!==projectId);
+  if(isOn){
+    att.overtimes=(att.overtimes||[]).filter(x=>x.projectId!==projectId);
+    const sa={...(att.siteAmounts||{})};
+    delete sa[projectId];
+    att.siteAmounts=sa;
+  }
   if(!att.overtimes) att.overtimes=[];
   if(!att.status||att.status==='') att.status='present';
   setDB({...DB,attendance:DB.attendance.map((a,i)=>i===idx?att:a)});
@@ -857,6 +875,18 @@ function toggleOtSite(empId, projectId){
 }
 function toggleSite(empId, projectId){ toggleEmpSite(empId, projectId); }
 function toggleOt(empId, projectId){ toggleOtSite(empId, projectId); }
+// 切換工地工時份額：1天 → 半天 → 1天
+function toggleSiteAmount(empId, projectId){
+  const idx=DB.attendance.findIndex(a=>a.employeeId===empId&&a.date===attDate);
+  if(idx<0) return;
+  const att={...DB.attendance[idx]};
+  const siteAmounts={...(att.siteAmounts||{})};
+  const cur=siteAmounts[projectId];
+  if(cur===undefined||cur===1) siteAmounts[projectId]=0.5;
+  else siteAmounts[projectId]=1;
+  att.siteAmounts=siteAmounts;
+  setDB({...DB,attendance:DB.attendance.map((a,i)=>i===idx?att:a)});
+}
 
 let calDetailDate = '';
 
@@ -975,11 +1005,12 @@ function buildProjBlocks(filter){
     att.forEach(a=>{
       const emp=empMap[a.employeeId]; if(!emp)return;
       const base=baseMult(a.status);
+      const siteAmt=getSiteAmount(a,p.id); // 工地工時份額（預設1，半天=0.5）
       const otAmt=getOtAmount(a,p.id);
-      const units=base+otAmt;
+      const units=base*siteAmt+otAmt;   // 工地成本 = 工時份額×基本天數 + 加班
       const rate=getRateForDate(emp,a.date);
       if(!byEmp[emp.id]) byEmp[emp.id]={emp,days:0,otDays:0,gross:0,dates:[]};
-      byEmp[emp.id].days+=base;
+      byEmp[emp.id].days+=base*siteAmt;
       byEmp[emp.id].otDays+=otAmt>0?1:0;
       byEmp[emp.id].gross+=units*rate;
       byEmp[emp.id].dates.push(a.date);
@@ -1293,9 +1324,10 @@ function renderWages(){
         const sites=a.projectIds?.length?a.projectIds:['_u'];
         sites.forEach(pid=>{
           if(!byProj[pid])byProj[pid]={days:0,otDays:0,gross:0};
+          const siteAmt=getSiteAmount(a,pid);
           const otAmt=getOtAmount(a,pid);
-          byProj[pid].days+=base; byProj[pid].otDays+=otAmt;
-          byProj[pid].gross+=(base+otAmt)*rate;
+          byProj[pid].days+=base*siteAmt; byProj[pid].otDays+=otAmt;
+          byProj[pid].gross+=(base*siteAmt+otAmt)*rate;
         });
       });
       const siteRows=Object.entries(byProj).map(([pid,v])=>({pid,name:pid==='_u'?'未指定工地':(projMap[pid]?.name||'已刪除工地'),...v})).sort((a,b)=>b.gross-a.gross);
@@ -1344,10 +1376,12 @@ function renderWages(){
         const base=bDV(a.status); const rate=getRateForDate(e,a.date);
         const sites=a.projectIds?.length?a.projectIds:['_u'];
         sites.forEach(pid=>{
-          const otAmt=getOtAmount(a,pid); const hOt=otAmt>0; const units=base+otAmt;
+          const siteAmt=getSiteAmount(a,pid);
+          const otAmt=getOtAmount(a,pid); const hOt=otAmt>0;
+          const units=base*siteAmt+otAmt;
           if(!byProj[pid])byProj[pid]={emps:{},total:0};
           if(!byProj[pid].emps[e.id])byProj[pid].emps[e.id]={emp:e,days:0,otDays:0,gross:0};
-          byProj[pid].emps[e.id].days+=base; byProj[pid].emps[e.id].otDays+=hOt?1:0;
+          byProj[pid].emps[e.id].days+=base*siteAmt; byProj[pid].emps[e.id].otDays+=hOt?1:0;
           byProj[pid].emps[e.id].gross+=units*rate; byProj[pid].total+=units*rate;
         });
       });
