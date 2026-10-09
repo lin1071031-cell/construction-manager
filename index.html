@@ -77,6 +77,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;backgrou
 .badge{display:inline-block;font-size:12px;font-weight:700;padding:3px 10px;border-radius:99px;}
 .badge-present{background:#EAF4EC;color:#4C8C5C;}
 .badge-half{background:#FBF1DF;color:#D99A2B;}
+.badge-ot{background:var(--accent);color:#fff;}
+.cal-cell.half{background:#FBF1DF;border-color:#D99A2B;}
+.cal-tag{display:block;width:fit-content;font-size:9px;font-weight:700;border-radius:3px;padding:1px 4px;margin-top:2px;color:#fff;}
+.cal-tag.paid{background:#4C8C5C;}
+.cal-tag.half{background:#D99A2B;}
+.cal-tag.ot{background:var(--accent);}
+.cal-tag.off{background:#9AA0A6;}
+.date-pill.half{background:#FBF1DF;color:#B9791A;border:1px solid #D99A2B;}
+.date-pill .ot-tag{background:var(--accent);color:#fff;border-radius:4px;padding:0 4px;margin-left:3px;font-family:inherit;font-weight:700;}
 .badge-leave{background:#F1F1EF;color:#9AA0A6;}
 .badge-typhoon{background:#E4ECF7;color:#5B7FBE;}
 .badge-holiday{background:#F5E8F5;color:#C070C0;}
@@ -282,6 +291,24 @@ const getSiteAmount = (att, projectId) => {
   return (v===undefined||v===null) ? 1 : v;
 };
 
+// 當日實際工時（全天=1、半天=0.5；多工地分攤時合計最多 1）
+const getDayWork = (att) => {
+  if(!att || !STATUS[att.status]?.paid) return 0;
+  if(att.status==='half') return 0.5;
+  const sites = att.projectIds||[];
+  if(!sites.length) return 1;
+  return Math.min(1, sites.reduce((s,pid)=>s+getSiteAmount(att,pid),0));
+};
+const isHalfAtt = (att) => { const w=getDayWork(att); return w>0 && w<1; };
+const otText = n => '加班'+(n===0.5?'½':n);
+// 狀態標籤：半天顯示「半天」，加班另外顯示橘色「加班½」
+function attBadges(a){
+  let h = isHalfAtt(a) ? badge('half') : badge(a.status);
+  const ot = getTotalOt(a);
+  if(ot>0) h += ` <span class="badge badge-ot">${otText(ot)}</span>`;
+  return h;
+}
+
 // ============================================================
 // App 狀態
 // ============================================================
@@ -481,7 +508,7 @@ function renderDashboard(){
   todayAtt.forEach(a=>{
     const emp=empMap[a.employeeId];
     const sites=(a.projectIds||[]).map(id=>projMap[id]?.name).filter(Boolean).join('、')||'未指定工地';
-    todayRows+=`<div class="table-row cols3"><span style="font-weight:700">${emp?.name||'—'}</span><span class="muted">${sites}</span>${badge(a.status)}</div>`;
+    todayRows+=`<div class="table-row cols3"><span style="font-weight:700">${emp?.name||'—'}</span><span class="muted">${sites}</span><span>${attBadges(a)}</span></div>`;
   });
 
   // 財務總覽計算
@@ -910,27 +937,34 @@ function renderCalendar(){
     const atts=attByDate[ds]||[];
     const isPaid=atts.some(a=>STATUS[a.status]?.paid);
     const isLeave=atts.length>0&&atts.every(a=>!STATUS[a.status]?.paid);
-    const hasOt=atts.some(a=>getTotalOt(a)>0);
     const isSelected=calDetailDate===ds;
-    const cls=isPaid?'paid':isLeave?'leave':'';
+    let cls=isPaid?'paid':isLeave?'leave':'';
     // 格子內顯示員工或狀態
     let inner='';
     if(calEmployee){
-      // 單一員工：顯示狀態標籤
+      // 單一員工：顯示出勤／半天／加班標籤
       if(atts.length>0){
-        const st=atts[0].status;
-        const sm=STATUS[st];
-        inner=`<span style="font-size:9px;background:${isPaid?'#4C8C5C':isLeave?'#9AA0A6':'#9AA0A6'};color:#fff;border-radius:3px;padding:1px 4px;margin-top:2px;display:inline-block">${sm?.label||''}</span>`;
+        const a0=atts[0];
+        const half=isHalfAtt(a0);
+        if(half) cls='half';
+        const tagCls=half?'half':isPaid?'paid':'off';
+        const label=half?'半天':(STATUS[a0.status]?.label||'');
+        inner=`<span class="cal-tag ${tagCls}">${label}</span>`;
+        const ot=getTotalOt(a0);
+        if(ot>0) inner+=`<span class="cal-tag ot">${otText(ot)}</span>`;
       }
     } else {
-      // 全員：顯示出勤人數
+      // 全員：出勤人數 ＋ 半天人數 ＋ 加班人數
       const cnt=atts.filter(a=>STATUS[a.status]?.paid).length;
-      if(cnt>0) inner=`<span style="font-size:10px;font-weight:700;color:var(--success)">${cnt}人</span>`;
+      const halfCnt=atts.filter(isHalfAtt).length;
+      const otCnt=atts.filter(a=>getTotalOt(a)>0).length;
+      if(cnt>0) inner=`<span style="font-size:10px;font-weight:700;color:var(--success);display:block">${cnt}人</span>`;
+      if(halfCnt>0) inner+=`<span class="cal-tag half">半天${halfCnt}</span>`;
+      if(otCnt>0) inner+=`<span class="cal-tag ot">加班${otCnt}</span>`;
     }
     cells+=`<div class="cal-cell ${cls}${isSelected?' sel':''}" onclick="calDetailDate=calDetailDate==='${ds}'?'':'${ds}';render()" style="cursor:${atts.length?'pointer':'default'}${isSelected?';border-color:var(--accent);border-width:2px':''}">
       <span class="cal-day">${d}</span>
       ${inner}
-      ${hasOt?'<span class="cal-ot">加</span>':''}
     </div>`;
   }
   const prevM=new Date(y,m-2,1); const nextM=new Date(y,m,1);
@@ -940,7 +974,8 @@ function renderCalendar(){
   DB.employees.forEach(e=>{ empOpts+=`<option value="${e.id}" ${calEmployee===e.id?'selected':''}>${e.name}</option>`; });
   const paidAtt=monthAtt.filter(a=>STATUS[a.status]?.paid);
   const totalDays=paidAtt.reduce((s,a)=>s+(a.status==='half'?0.5:1),0);
-  const otDays=monthAtt.filter(a=>getTotalOt(a)>0).length;
+  const otDays=monthAtt.reduce((s,a)=>s+getTotalOt(a),0);
+  const halfDays=monthAtt.filter(isHalfAtt).length;
 
   // 點選日期的明細
   let detailPanel='';
@@ -949,12 +984,21 @@ function renderCalendar(){
     let rows='';
     datAtts.forEach(a=>{
       const emp=empMap[a.employeeId];
-      const sites=(a.projectIds||[]).map(id=>projMap[id]?.name).filter(Boolean).join('、')||'—';
-      const otAmt=getTotalOt(a);const ot=otAmt>0?`＋加班${otAmt===0.5?'½':''}`:'';
+      const siteIds=[...new Set([...(a.projectIds||[]),...(a.overtimes||[]).map(x=>x.projectId)])];
+      const siteTxt=siteIds.map(id=>{
+        const nm=projMap[id]?.name; if(!nm) return '';
+        const inSite=(a.projectIds||[]).includes(id);
+        const amt=getSiteAmount(a,id);
+        const ot=getOtAmount(a,id);
+        let t=nm;
+        if(inSite && amt<1) t+=` <b style="color:#D99A2B">${amt===0.5?'½':amt}天</b>`;
+        if(ot>0) t+=` <b style="color:var(--accent)">${otText(ot)}</b>`;
+        return t;
+      }).filter(Boolean).join('<br>')||'—';
       rows+=`<div class="table-row cols3">
         <span style="font-weight:700">${emp?.name||'—'}</span>
-        ${badge(a.status)}
-        <span class="muted" style="font-size:12px">${sites}${ot}</span>
+        <span>${attBadges(a)}</span>
+        <span class="muted" style="font-size:12px">${siteTxt}</span>
       </div>`;
     });
     detailPanel=`<div class="card" style="margin-bottom:12px;border-color:var(--accent)">
@@ -979,7 +1023,7 @@ function renderCalendar(){
       </div>
       <select style="border:1px solid var(--line);border-radius:8px;padding:7px 8px;font-size:13px" onchange="calEmployee=this.value;calDetailDate='';render()">${empOpts}</select>
     </div>
-    ${calEmployee?`<div style="display:flex;gap:16px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:14px"><span>本月出勤 <strong style="color:var(--accent)">${totalDays}</strong> 天</span>${otDays>0?`<span>加班 <strong style="color:var(--accent)">${otDays}</strong> 天</span>`:''}</div>`:''}
+    ${calEmployee?`<div style="display:flex;gap:16px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:14px"><span>本月出勤 <strong style="color:var(--accent)">${totalDays}</strong> 天</span>${halfDays>0?`<span>半天 <strong style="color:#D99A2B">${halfDays}</strong> 天</span>`:''}${otDays>0?`<span>加班 <strong style="color:var(--accent)">${otDays}</strong> 天</span>`:''}</div>`:''}
     <div class="cal-grid">${heads}${cells}</div>
     ${detailPanel}
   </div>`;
@@ -1009,11 +1053,13 @@ function buildProjBlocks(filter){
       const otAmt=getOtAmount(a,p.id);
       const units=base*siteAmt+otAmt;   // 工地成本 = 工時份額×基本天數 + 加班
       const rate=getRateForDate(emp,a.date);
-      if(!byEmp[emp.id]) byEmp[emp.id]={emp,days:0,otDays:0,gross:0,dates:[]};
+      if(!byEmp[emp.id]) byEmp[emp.id]={emp,days:0,otDays:0,gross:0,dates:[],info:{}};
       byEmp[emp.id].days+=base*siteAmt;
-      byEmp[emp.id].otDays+=otAmt>0?1:0;
+      byEmp[emp.id].otDays+=otAmt;
       byEmp[emp.id].gross+=units*rate;
       byEmp[emp.id].dates.push(a.date);
+      const inf=byEmp[emp.id].info[a.date]||(byEmp[emp.id].info[a.date]={work:0,ot:0});
+      inf.work+=base*siteAmt; inf.ot+=otAmt;
     });
     const empRows=Object.values(byEmp)
       .map(r=>({...r, firstDate:[...new Set(r.dates)].sort()[0]||''}))
@@ -1050,15 +1096,26 @@ function buildProjBlocks(filter){
       // 依月份分組
       const byMonth={};
       uniqueDates.forEach(d=>{ const ym=d.slice(0,7); if(!byMonth[ym])byMonth[ym]=[]; byMonth[ym].push(d); });
+      const r2=n=>Math.round(n*100)/100;
       let datePills='';
       Object.entries(byMonth).sort(([a],[b])=>a.localeCompare(b)).forEach(([ym,days])=>{
         const key='dm_'+p.id+'_'+r.emp.id+'_'+ym;
         const isMonthOpen=projExpanded[key];
-        const label=ym.slice(0,4)+'年'+ym.slice(5)+'月 '+days.length+'天';
+        const mWork=r2(days.reduce((s,d)=>s+(r.info[d]?.work||0),0));
+        const mOt=r2(days.reduce((s,d)=>s+(r.info[d]?.ot||0),0));
+        const label=ym.slice(0,4)+'年'+ym.slice(5)+'月 '+mWork+'天'+(mOt>0?' 加班'+mOt:'');
         datePills+=`<button class="date-pill" style="cursor:pointer;border:none" onclick="projExpanded['${key}']=!projExpanded['${key}'];render()">${label} ${isMonthOpen?'▲':'▼'}</button>`;
-        if(isMonthOpen){ days.forEach(d=>{ datePills+=`<span class="date-pill" style="background:#fff;border:1px solid var(--accent)">${d.slice(5)}</span>`; }); }
+        if(isMonthOpen){ days.forEach(d=>{
+          const inf=r.info[d]||{work:1,ot:0};
+          const half=inf.work>0&&inf.work<1;
+          const wTxt=half?(inf.work===0.5?' 半天':' '+r2(inf.work)+'天'):'';
+          const oTxt=inf.ot>0?`<span class="ot-tag">${otText(inf.ot)}</span>`:'';
+          datePills+=half
+            ? `<span class="date-pill half">${d.slice(5)}${wTxt}${oTxt}</span>`
+            : `<span class="date-pill" style="background:#fff;border:1px solid var(--accent)">${d.slice(5)}${oTxt}</span>`;
+        }); }
       });
-      laborDetails+=`<div class="detail-row"><span class="muted">${r.emp.name}</span><span class="mono">${r.days}天${r.otDays?'(+加班'+r.otDays+')':''}</span><span class="mono">${fmt(r.gross)}</span></div>
+      laborDetails+=`<div class="detail-row"><span class="muted">${r.emp.name}</span><span class="mono">${Math.round(r.days*100)/100}天${r.otDays?'(+加班'+Math.round(r.otDays*100)/100+')':''}</span><span class="mono">${fmt(r.gross)}</span></div>
       <div style="padding:2px 14px 8px;background:#FAF9F6;">${datePills}</div>`;
     });
     laborDetails+=`<div class="detail-row" style="font-weight:700;border-top:1px solid var(--line)"><span>人事成本合計</span><span></span><span class="mono">${fmt(laborTotal)}</span></div>`;
