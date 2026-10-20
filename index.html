@@ -571,36 +571,54 @@ function renderDashboard(){
 
 // ---- 員工管理 ----
 let empSearch = '';
+let showResigned = false;
+// 已離職：有填離職日期，且離職日期已到（含當天之後）
+const isResigned = e => !!e.terminationDate && e.terminationDate <= todayStr();
+const empListFilter = () => DB.employees.filter(e=>e.name.includes(empSearch) && (showResigned || !isResigned(e)));
 function empCardHtml(e){
   const rate = getRateForDate(e, todayStr());
   return `<div class="card card-row">
     <div class="avatar">${e.name.slice(0,1)}</div>
     <div class="card-info">
-      <strong>${e.name}</strong>
+      <strong>${e.name}${isResigned(e)?' <span class="badge" style="background:#E8E8E8;color:#777">已離職</span>':''}</strong>
       <span class="muted">${e.role||'工班人員'}</span>
       <span class="mono accent" style="font-size:13px">${fmt(rate)}/日</span>
       ${e.hireDate?`<span class="muted" style="font-size:11px">到職 ${e.hireDate}${e.terminationDate?' · 離職 '+e.terminationDate:''}</span>`:''}
     </div>
     <div class="card-actions">
+      <button class="icon-btn" onclick="moveEmployee('${e.id}',-1)" title="上移">🔼</button>
+      <button class="icon-btn" onclick="moveEmployee('${e.id}',1)" title="下移">🔽</button>
       <button class="icon-btn" onclick="editEmployee('${e.id}')">✏️</button>
       <button class="icon-btn red" onclick="deleteEmployee('${e.id}')">🗑️</button>
     </div>
   </div>`;
 }
+// 調整員工排列順序（影響打卡名單、薪資等所有列表）
+function moveEmployee(id,dir){
+  const vis=empListFilter();
+  const i=vis.findIndex(e=>e.id===id), j=i+dir;
+  if(i<0||j<0||j>=vis.length) return;
+  const arr=[...DB.employees];
+  const x=arr.findIndex(e=>e.id===vis[i].id), y=arr.findIndex(e=>e.id===vis[j].id);
+  [arr[x],arr[y]]=[arr[y],arr[x]];
+  setDB({...DB, employees:arr});
+}
 function updateEmpList(){
   const c=document.getElementById('emp-list-container');
   if(!c){render();return;}
-  const list=DB.employees.filter(e=>e.name.includes(empSearch));
+  const list=empListFilter();
   c.innerHTML=list.length===0?emptyState('👷','還沒有員工資料','點右上角新增第一位員工'):list.map(empCardHtml).join('');
 }
 function renderEmployees(){
-  const list = DB.employees.filter(e=>e.name.includes(empSearch));
+  const list = empListFilter();
+  const resignedCnt = DB.employees.filter(isResigned).length;
   return `<div class="page">
     <div class="row-between page-head">
-      <div><h1>員工管理</h1><p class="muted">共 ${DB.employees.length} 位</p></div>
+      <div><h1>員工管理</h1><p class="muted">在職 ${DB.employees.length-resignedCnt} 位${resignedCnt?` · 已離職 ${resignedCnt} 位${showResigned?'':'（已隱藏）'}`:''}</p></div>
       <button class="btn primary" onclick="editEmployee(null)">＋ 新增員工</button>
     </div>
     <div class="search-bar"><span>🔍</span><input placeholder="搜尋姓名" value="${empSearch}" oninput="empSearch=this.value;updateEmpList()" /></div>
+    ${resignedCnt?`<label style="display:flex;align-items:center;gap:8px;margin:8px 2px;font-size:13px;color:var(--muted,#777)"><input type="checkbox" ${showResigned?'checked':''} onchange="showResigned=this.checked;render()"> 顯示已離職員工</label>`:''}
     <div id="emp-list-container">${list.length===0?emptyState('👷','還沒有員工資料','點右上角新增第一位員工'):list.map(empCardHtml).join('')}</div>
   </div>`;
 }
@@ -689,6 +707,8 @@ function renderAttendance(){
 
   const dayAtt = DB.attendance.filter(a=>a.date===attDate);
   const attByEmp = Object.fromEntries(dayAtt.map(a=>[a.employeeId,a]));
+  // 打卡名單：已離職（離職日 ≤ 打卡日）的員工不顯示；若當天已有出勤紀錄仍保留，避免資料看不到
+  const emps = DB.employees.filter(e=>!(e.terminationDate && e.terminationDate<=attDate) || attByEmp[e.id]);
   const dateObj = new Date(attDate+'T00:00:00');
   const weekday = WEEKDAYS_TW[dateObj.getDay()];
 
@@ -700,11 +720,11 @@ function renderAttendance(){
 
   // 假別設定區（已請假/颱風/放假的員工）
   let leaveSection='';
-  const leaveEmps=DB.employees.filter(e=>{
+  const leaveEmps=emps.filter(e=>{
     const att=attByEmp[e.id];
     return att && NO_SITE.has(att.status);
   });
-  const unassignedEmps=DB.employees.filter(e=>{
+  const unassignedEmps=emps.filter(e=>{
     const att=attByEmp[e.id];
     return !att || (!NO_SITE.has(att.status) && !(att.projectIds||[]).length);
   });
@@ -720,13 +740,13 @@ function renderAttendance(){
     activeProjects.forEach(p=>{
       const isOpen=!!attSiteExpanded[p.id]; // 預設收合
       // 在這個工地打卡的員工
-      const assignedEmps=DB.employees.filter(e=>{
+      const assignedEmps=emps.filter(e=>{
         const att=attByEmp[e.id];
         return (att?.projectIds||[]).includes(p.id);
       });
-      const hasOtEmps=DB.employees.some(e=>getOtAmount(attByEmp[e.id],p.id)>0);
+      const hasOtEmps=emps.some(e=>getOtAmount(attByEmp[e.id],p.id)>0);
       let empGrid='';
-      DB.employees.forEach(e=>{
+      emps.forEach(e=>{
         const att=attByEmp[e.id];
         const isLeave=att&&NO_SITE.has(att.status);
         if(isLeave) return;
@@ -779,7 +799,7 @@ function renderAttendance(){
   let leaveCards='';
   const leaveIsOpen=attExpanded['__leave__'];
   let leaveChips='';
-  DB.employees.forEach(e=>{
+  emps.forEach(e=>{
     const att=attByEmp[e.id];
     const cur=att?.status||'';
     if(!NO_SITE.has(cur)&&cur!=='') return; // 只顯示未登記或請假類的
@@ -793,7 +813,7 @@ function renderAttendance(){
   });
   // 顯示所有員工的假別設定（收合式）
   let allLeaveChips='';
-  DB.employees.forEach(e=>{
+  emps.forEach(e=>{
     const att=attByEmp[e.id];
     const cur=att?.status||'';
     if(NO_SITE.has(cur)){
@@ -816,7 +836,7 @@ function renderAttendance(){
     ${leaveIsOpen?`<div style="border-top:1px dashed var(--line);padding-top:10px;margin-top:8px">
       ${allLeaveChips}
       <p style="font-size:11px;color:var(--muted);margin-top:8px">也可在此設定所有員工的出勤狀態</p>
-      ${DB.employees.map(e=>{
+      ${emps.map(e=>{
         const att=attByEmp[e.id]; const cur=att?.status||'';
         if(NO_SITE.has(cur)) return '';
         return `<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
